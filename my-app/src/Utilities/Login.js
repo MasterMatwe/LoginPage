@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import FacebookLogin from 'react-facebook-login';
 import GoogleLogin from 'react-google-login';
+import axios from 'axios';
 import './LoginForm.css';
 
 const GoogleLoginButton = ({ onSuccess, onFailure }) => {
@@ -68,52 +69,65 @@ const LoginForm = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (isLogin) {
-      console.log('Login submitted:', { username, password });
-      // Add your login logic here
-    } else {
-      console.log('Register submitted:', { username, email, password, confirmPassword });
       try {
-        const response = await fetch('/api/register', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ username, email, password }),
-        });
-
-        if (response.ok) {
-          console.log('Registration successful');
-          setUsername('');
-          setPassword('');
-          setEmail('');
-          setConfirmPassword('');
-          navigate('/login');
-        } else {
-          const errorData = await response.json();
-          console.error('Registration failed:', errorData.message);
-        }
+        const response = await axios.post('http://localhost:3001/api/login', { username, password });
+        console.log('Login successful:', response.data);
+        localStorage.setItem('token', response.data.token);
+        localStorage.setItem('role', response.data.role);
+        navigate(response.data.role === 1 ? '/employee-dashboard' : '/customer-dashboard');
       } catch (error) {
-        console.error('Error during registration:', error);
+        console.error('Login failed:', error.response?.data?.message || 'An error occurred');
+        alert('Login failed');
+      }
+    } else {
+      try {
+        const response = await axios.post('http://localhost:3001/api/register', { username, email, password, role: 'customer' });
+        console.log('Registration successful:', response.data);
+        setUsername('');
+        setPassword('');
+        setEmail('');
+        setConfirmPassword('');
+        navigate('/login');
+      } catch (error) {
+        console.error('Registration failed:', error.response?.data?.message || 'An error occurred');
+        alert('Registration failed');
       }
     }
   };
 
-  const handleFacebookCallback = (response) => {
+  const handleFacebookCallback = async (response) => {
     if (response?.status === "unknown") {
       console.error('Sorry!', 'Something went wrong with Facebook Login.');
       return;
     }
-    console.log('Facebook response:', response);
+    try {
+      const result = await axios.post('http://localhost:3001/api/facebook-login', { accessToken: response.accessToken });
+      console.log('Facebook login successful:', result.data);
+      localStorage.setItem('token', result.data.token);
+      localStorage.setItem('role', result.data.role);
+      navigate(result.data.role === 1 ? '/employee-dashboard' : '/customer-dashboard');
+    } catch (error) {
+      console.error('Facebook login failed:', error.response?.data?.message || 'An error occurred');
+      alert('Facebook login failed');
+    }
   };
 
-  const handleGoogleSuccess = (response) => {
-    console.log('Google login success:', response);
-    // Handle the successful login here
+  const handleGoogleSuccess = async (response) => {
+    try {
+      const result = await axios.post('http://localhost:3001/api/google-login', { token: response.tokenId });
+      console.log('Google login successful:', result.data);
+      localStorage.setItem('token', result.data.token);
+      localStorage.setItem('role', result.data.role);
+      navigate(result.data.role === 1 ? '/employee-dashboard' : '/customer-dashboard');
+    } catch (error) {
+      console.error('Google login failed:', error.response?.data?.message || 'An error occurred');
+      alert('Google login failed');
+    }
   };
 
   const handleGoogleFailure = (error) => {
     console.error('Google Sign-In Error:', error);
-    // Handle the login failure here
+    alert('Google login failed');
   };
 
   const toggleMode = () => {

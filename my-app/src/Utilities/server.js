@@ -3,6 +3,8 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const axios = require('axios');
+require('dotenv').config();
 
 const app = express();
 
@@ -66,73 +68,56 @@ app.post('/api/login', async (req, res) => {
     }
 
     const user = result.rows[0];
-    const isMatch = await bcrypt.compare(password, user.mat_khau);
+    const isPasswordValid = await bcrypt.compare(password, user.mat_khau);
 
-    if (!isMatch) {
+    if (!isPasswordValid) {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
 
-    const token = jwt.sign({ id: user.tai_khoan, role: user.quyen }, 'your_jwt_secret', { expiresIn: '1h' });
-    res.json({ token, role: user.quyen });
+    const token = jwt.sign({ id: user.tai_khoan, role: user.quyen }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    res.json({ message: 'Login successful', token, role: user.quyen });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Error logging in' });
+    res.status(500).json({ message: 'Error during login' });
   }
 });
 
-// Get all books
-app.get('/api/books', async (req, res) => {
+// Google login route
+app.post('/api/google-login', async (req, res) => {
   try {
-    const query = 'SELECT * FROM Sach';
-    const result = await pool.query(query);
-    res.json(result.rows);
+    const { token } = req.body;
+    const response = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    const { email, name, sub: googleId } = response.data;
+
+    // Check if the user already exists in your database
+    const userQuery = 'SELECT * FROM Tai_khoan WHERE tai_khoan = $1';
+    const userResult = await pool.query(userQuery, [email]);
+
+    let user;
+    if (userResult.rows.length === 0) {
+      // User doesn't exist, create a new one
+      const hashedPassword = await bcrypt.hash(googleId, 10); // Use googleId as password
+      const insertQuery = 'INSERT INTO Tai_khoan(tai_khoan, mat_khau, ten, quyen) VALUES($1, $2, $3, $4) RETURNING *';
+      const insertResult = await pool.query(insertQuery, [email, hashedPassword, name, 2]); // Assuming 2 is the role for customers
+      user = insertResult.rows[0];
+    } else {
+      user = userResult.rows[0];
+    }
+
+    const jwtToken = jwt.sign({ id: user.tai_khoan, role: user.quyen }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    res.json({ message: 'Google login successful', token: jwtToken, role: user.quyen });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Error fetching books' });
+    console.error('Error during Google login:', error);
+    res.status(500).json({ message: 'Error during Google login' });
   }
 });
 
-// Add a new book
-app.post('/api/books', async (req, res) => {
-  try {
-    const { ten_sach, mo_ta, tac_gia, nam_xuat_ban } = req.body;
-    const query = 'INSERT INTO Sach(ten_sach, mo_ta, tac_gia, nam_xuat_ban) VALUES($1, $2, $3, $4) RETURNING id';
-    const values = [ten_sach, mo_ta, tac_gia, nam_xuat_ban];
-    const result = await pool.query(query, values);
-    res.status(201).json({ message: 'Book added successfully', bookId: result.rows[0].id });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Error adding book' });
-  }
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
-
-// Borrow a book
-app.post('/api/borrow', async (req, res) => {
-  try {
-    const { id_khach_hang, id_sach_muon, id_nhan_vien, ngay_muon, ngay_tra_du_dinh } = req.body;
-    const query = 'INSERT INTO TheMuon(id_khach_hang, id_sach_muon, id_nhan_vien, ngay_muon, ngay_tra_du_dinh) VALUES($1, $2, $3, $4, $5) RETURNING id';
-    const values = [id_khach_hang, id_sach_muon, id_nhan_vien, ngay_muon, ngay_tra_du_dinh];
-    const result = await pool.query(query, values);
-    res.status(201).json({ message: 'Book borrowed successfully', borrowId: result.rows[0].id });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Error borrowing book' });
-  }
-});
-
-// Return a book
-app.put('/api/return/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { ngay_tra_thuc_te } = req.body;
-    const query = 'UPDATE TheMuon SET ngay_tra_thuc_te = $1 WHERE id = $2';
-    await pool.query(query, [ngay_tra_thuc_te, id]);
-    res.json({ message: 'Book returned successfully' });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Error returning book' });
-  }
-});
-
-const port = process.env.PORT || 5000;
-app.listen(port, () => console.log(`Server running on port ${port}`));
